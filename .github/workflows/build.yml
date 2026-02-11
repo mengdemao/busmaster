@@ -1,0 +1,168 @@
+name: Build BusMaster
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+# 配置构建权限
+permissions:
+  contents: read
+
+jobs:
+  busmaster-build:
+    runs-on: windows-latest
+    timeout-minutes: 30  # 构建超时时间（适配依赖下载）
+    steps:
+      # 1. 检出仓库代码（含 build.bat 和解决方案）
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 安装 Chocolatey（Windows 包管理器）
+      - name: Install Chocolatey
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          choco --version  # 验证安装
+        shell: pwsh
+
+      # 3. 安装 MinGW (64位)
+      - name: Install MinGW (GCC 64-bit)
+        run: |
+          choco install mingw -y --no-progress --version=11.2.0  # 指定稳定版本
+          # 配置环境变量（build.bat 会读取此路径）
+          $mingwPath = "C:\tools\mingw64\bin"
+          echo "MINGW_PATH=$mingwPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "PATH=$mingwPath;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        shell: pwsh
+
+      # 4. 安装 Bison 2.4.1 + Flex 2.5.35（GnuWin32 版本，匹配 build.bat 要求）
+      - name: Install Bison & Flex (Match build.bat version)
+        run: |
+          # 手动下载指定版本（Chocolatey 新版可能不兼容，优先原生版本）
+          $bisonUrl = "https://downloads.sourceforge.net/project/gnuwin32/bison/2.4.1/bison-2.4.1-setup.exe"
+          $flexUrl = "https://downloads.sourceforge.net/project/gnuwin32/flex/2.5.35/flex-2.5.35-setup.exe"
+          
+          # 下载安装包
+          Invoke-WebRequest -Uri $bisonUrl -OutFile "$env:TEMP\bison-setup.exe"
+          Invoke-WebRequest -Uri $flexUrl -OutFile "$env:TEMP\flex-setup.exe"
+          
+          # 静默安装（适配 build.bat 路径：C:\Program Files (x86)\GnuWin32\bin）
+          Start-Process -FilePath "$env:TEMP\bison-setup.exe" -ArgumentList "/S" -Wait
+          Start-Process -FilePath "$env:TEMP\flex-setup.exe" -ArgumentList "/S" -Wait
+          
+          # 配置环境变量
+          $gnuWin32Path = "C:\Program Files (x86)\GnuWin32\bin"
+          echo "PATH=$gnuWin32Path;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          
+          # 验证安装
+          bison --version
+          flex --version
+        shell: pwsh
+
+      # 5. 安装 GetText（Bison/Flex 依赖）
+      - name: Install GetText
+        run: |
+          choco install gettext -y --no-progress
+          echo "PATH=C:\Program Files (x86)\GnuWin32\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        shell: pwsh
+
+      # 6. 安装 Libxml2 2.9.0（Win32 版，匹配 build.bat 路径）
+      - name: Install Libxml2 2.9.0
+        run: |
+          # 下载预编译包
+          $libxml2Url = "https://download.gnome.org/binaries/win32/libxml2/2.9/libxml2-2.9.0.win32.zip"
+          $zipPath = "$env:TEMP\libxml2.zip"
+          Invoke-WebRequest -Uri $libxml2Url -OutFile $zipPath
+          
+          # 解压到 build.bat 预期路径
+          Expand-Archive -Path $zipPath -DestinationPath "C:\tools\libxml2" -Force
+          
+          # 配置环境变量（build.bat 读取 LIBXML2_INCLUDE/LIBXML2_LIB）
+          echo "LIBXML2_INCLUDE=C:\tools\libxml2\include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "LIBXML2_LIB=C:\tools\libxml2\lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "PATH=C:\tools\libxml2\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          
+          # 验证 libxml2
+          xml2-config --version
+        shell: pwsh
+
+      # 7. 安装 Oxygen Icon Set 4.7.4
+      - name: Install Oxygen Icon Set
+        run: |
+          # 下载并解压图标集
+          $oxygenUrl = "https://download.kde.org/stable/oxygen-icons/4.7.4/oxygen-icons-4.7.4.tar.bz2"
+          $tarPath = "$env:TEMP\oxygen.tar.bz2"
+          Invoke-WebRequest -Uri $oxygenUrl -OutFile $tarPath
+          
+          # 安装 7zip 用于解压
+          choco install 7zip -y --no-progress
+          & "C:\Program Files\7-Zip\7z.exe" x $tarPath -o"C:\tools\oxygen-icons" -y
+          
+          # 配置图标路径（build.bat 读取 OXYGEN_ICONS_PATH）
+          echo "OXYGEN_ICONS_PATH=C:\tools\oxygen-icons\oxygen-icons-4.7.4\icons" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        shell: pwsh
+
+      # 8. 配置 MSBuild（Visual Studio Build Tools）
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x86  # 匹配 .NET Framework 项目架构
+
+      # 9. 恢复 NuGet 依赖（匹配 build.bat 中的 nuget restore）
+      - name: Restore NuGet Packages
+        run: |
+          nuget restore Busmaster.sln -Verbosity quiet
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+
+      # 10. 执行 build.bat 核心逻辑（生成语法代码 + 构建项目）
+      - name: Run build.bat Core Logic
+        run: |
+          # 步骤1：调用 bison/flex 生成语法解析代码（模拟 build.bat 中的生成逻辑）
+          cd ${{ github.workspace }}\Sources\CANParser
+          bison -d -o canparser.tab.c canparser.y
+          flex -o lex.canparser.c canparser.l
+          
+          # 步骤2：调用 MSBuild 构建解决方案（匹配 build.bat 的 MSBuild 参数）
+          msbuild Busmaster.sln `
+            /t:Build `
+            /p:Configuration=Release `
+            /p:Platform="Any CPU" `
+            /p:MINGW_PATH="$env:MINGW_PATH" `
+            /p:LIBXML2_INCLUDE="$env:LIBXML2_INCLUDE" `
+            /p:LIBXML2_LIB="$env:LIBXML2_LIB" `
+            /p:OXYGEN_ICONS_PATH="$env:OXYGEN_ICONS_PATH" `
+            /m /v:m
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+
+      # 11. 复制依赖文件（匹配 build.bat 中的 copy 逻辑）
+      - name: Copy Dependencies to Output
+        run: |
+          # 复制 libxml2.dll 到输出目录
+          $outputDir = "${{ github.workspace }}\Sources\Busmaster\bin\Release"
+          Copy-Item -Path "C:\tools\libxml2\bin\libxml2.dll" -Destination $outputDir -Force
+          
+          # 复制 Oxygen 图标到资源目录
+          Copy-Item -Path "$env:OXYGEN_ICONS_PATH\*" -Destination "$outputDir\icons" -Recurse -Force
+          
+          # 验证文件存在
+          if (Test-Path "$outputDir\Busmaster.exe") {
+            Write-Host "✅ 构建成功！Busmaster.exe 路径：$outputDir\Busmaster.exe"
+          } else {
+            Write-Error "❌ 构建失败！未找到 Busmaster.exe"
+            exit 1
+          }
+        shell: pwsh
+
+      # 12. 可选：上传构建产物（方便下载）
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Busmaster-Win-Release
+          path: ${{ github.workspace }}\Sources\Busmaster\bin\Release\*
+          if-no-files-found: error
