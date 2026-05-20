@@ -66,7 +66,7 @@ jobs:
       - name: Install Oxygen Icon Set
         run: |
           # 下载并解压图标集
-          $oxygenUrl = "https://download.kde.org/stable/oxygen-icons/4.7.4/oxygen-icons-4.7.4.tar.bz2"
+          $oxygenUrl = "https://cdn.download.kde.org/stable/oxygen-icons/oxygen-icons-6.2.0.tar.xz"
           $tarPath = "$env:TEMP\oxygen.tar.bz2"
           Invoke-WebRequest -Uri $oxygenUrl -OutFile $tarPath
           
@@ -75,7 +75,7 @@ jobs:
           & "C:\Program Files\7-Zip\7z.exe" x $tarPath -o"C:\tools\oxygen-icons" -y
           
           # 配置图标路径（build.bat 读取 OXYGEN_ICONS_PATH）
-          echo "OXYGEN_ICONS_PATH=C:\tools\oxygen-icons\oxygen-icons-4.7.4\icons" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "OXYGEN_ICONS_PATH=C:\tools\oxygen-icons\oxygen-icons-6.2.0\icons" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         shell: pwsh
 
       # 8. 配置 MSBuild（Visual Studio Build Tools）
