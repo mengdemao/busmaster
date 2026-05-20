@@ -78,41 +78,17 @@ jobs:
           echo "OXYGEN_ICONS_PATH=C:\tools\oxygen-icons\oxygen-icons-6.2.0\icons" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         shell: pwsh
 
-      # 8. 配置 MSBuild（Visual Studio Build Tools）
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
         with:
           msbuild-architecture: x86  # 匹配 .NET Framework 项目架构
 
-      # 9. 恢复 NuGet 依赖（匹配 build.bat 中的 nuget restore）
-      - name: Restore NuGet Packages
+      - name: Run original build.bat
         run: |
-          nuget restore Busmaster.sln -Verbosity quiet
-        working-directory: ${{ github.workspace }}
-        shell: pwsh
-
-      # 10. 执行 build.bat 核心逻辑（生成语法代码 + 构建项目）
-      - name: Run build.bat Core Logic
-        run: |
-          # 步骤1：调用 bison/flex 生成语法解析代码（模拟 build.bat 中的生成逻辑）
-          cd ${{ github.workspace }}\Sources\CANParser
-          bison -d -o canparser.tab.c canparser.y
-          flex -o lex.canparser.c canparser.l
-          
-          # 步骤2：调用 MSBuild 构建解决方案（匹配 build.bat 的 MSBuild 参数）
-          msbuild Busmaster.sln `
-            /t:Build `
-            /p:Configuration=Release `
-            /p:Platform="Any CPU" `
-            /p:MINGW_PATH="$env:MINGW_PATH" `
-            /p:LIBXML2_INCLUDE="$env:LIBXML2_INCLUDE" `
-            /p:LIBXML2_LIB="$env:LIBXML2_LIB" `
-            /p:OXYGEN_ICONS_PATH="$env:OXYGEN_ICONS_PATH" `
-            /m /v:m
-        working-directory: ${{ github.workspace }}
-        shell: pwsh
-
-      # 11. 复制依赖文件（匹配 build.bat 中的 copy 逻辑）
+          cd Sources
+          .\build.bat
+        shell: cmd 
+      
       - name: Copy Dependencies to Output
         run: |
           # 复制 libxml2.dll 到输出目录
