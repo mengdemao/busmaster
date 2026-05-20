@@ -81,8 +81,24 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
         with:
-          msbuild-architecture: x86  # 匹配 .NET Framework 项目架构
-
+          msbuild-architecture: x86 
+          
+      - name: Fix broken import paths in .vcxproj files
+        run: |
+          # 递归查找所有 .vcxproj 文件
+          $projectFiles = Get-ChildItem -Path "$env:GITHUB_WORKSPACE\Sources" -Filter "*.vcxproj" -Recurse
+          foreach ($file in $projectFiles) {
+            $content = Get-Content -Path $file.FullName -Raw
+            if ($content -match 'D:\\Microsoft\.Cpp\.Default\.props') {
+              Write-Host "Fixing $($file.FullName)"
+              $content = $content -replace 'D:\\Microsoft\.Cpp\.Default\.props', '$(VCTargetsPath)\Microsoft.Cpp.Default.props'
+              $content = $content -replace 'D:\\Microsoft\.Cpp\.props', '$(VCTargetsPath)\Microsoft.Cpp.props'
+              $content = $content -replace 'D:\\Microsoft\.Cpp\.targets', '$(VCTargetsPath)\Microsoft.Cpp.targets'
+              Set-Content -Path $file.FullName -Value $content -NoNewline
+            }
+          }
+        shell: pwsh
+  
       - name: Run original build.bat
         run: |
           cd Sources
