@@ -5,32 +5,42 @@ on:
   pull_request:
     branches: [ main, master, develop ]
 
-# 配置构建权限
+# Configure repository permissions
 permissions:
   contents: read
 
 jobs:
   busmaster-build:
     runs-on: windows-latest
-    timeout-minutes: 30  # 构建超时时间（适配依赖下载）
+    timeout-minutes: 45
     steps:
-      # 1. 检出仓库代码（含 build.bat 和解决方案）
+      # Checkout source code from mengdemao/busmaster repository
       - name: Checkout Repository
         uses: actions/checkout@v6
         with:
+          repository: mengdemao/busmaster
           fetch-depth: 0
 
-      # 3. 安装 MinGW (64位)
+      # Install Qt 5.15.2 x86 MSVC2019 for BusMaster GUI
+      - name: Install Qt 5.15.2 (x86 MSVC2019)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          arch: 'win32_msvc2019'
+          modules: 'qttools qtmultimedia qtwinextras'
+          cache: true
+
+      # Install MinGW compiler for supporting build tools
       - name: Install MinGW (GCC 64-bit)
         run: |
-          choco install mingw -y --no-progress --version=11.2.0  # 指定稳定版本
-          # 配置环境变量（build.bat 会读取此路径）
+          choco install mingw -y --no-progress --version=11.2.0
           $mingwPath = "C:\tools\mingw64\bin"
           echo "MINGW_PATH=$mingwPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "PATH=$mingwPath;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         shell: pwsh
 
-      - name: Install Bison & Flex (Portable)
+      # Install Bison and Flex for parser generation
+      - name: Install Bison & Flex (winflexbison)
         run: |
           $bisonZipUrl = "https://github.com/lexxmark/winflexbison/releases/download/v2.5.25/win_flex_bison-2.5.25.zip"
           $tempZip = "$env:TEMP\winflexbison.zip"
@@ -42,19 +52,19 @@ jobs:
           
           $binPath = "C:\tools\winflexbison"
           echo "PATH=$binPath;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
-          
           & "$binPath\bison.exe" --version
           & "$binPath\flex.exe" --version
         shell: pwsh
 
-      # 5. 安装 GetText（Bison/Flex 依赖）
+      # Install GetText for internationalization support
       - name: Install GetText
         run: |
           choco install gettext -y --no-progress
           echo "PATH=C:\Program Files (x86)\GnuWin32\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         shell: pwsh
 
-      - name: Install libxml2 via vcpkg
+      # Install libxml2 via vcpkg for XML parsing
+      - name: Install libxml2 via vcpkg (x86-windows)
         run: |
           vcpkg install libxml2:x86-windows
           echo "LIBXML2_INCLUDE=C:\vcpkg\installed\x86-windows\include" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -62,35 +72,32 @@ jobs:
           echo "PATH=C:\vcpkg\installed\x86-windows\bin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
         shell: pwsh
 
-      # 7. 安装 Oxygen Icon Set 4.7.4
+      # Install KDE Oxygen icon set for UI resources
       - name: Install Oxygen Icon Set
         run: |
-          # 下载并解压图标集
           $oxygenUrl = "https://cdn.download.kde.org/stable/oxygen-icons/oxygen-icons-6.2.0.tar.xz"
-          $tarPath = "$env:TEMP\oxygen.tar.bz2"
+          $tarPath = "$env:TEMP\oxygen.tar.xz"
           Invoke-WebRequest -Uri $oxygenUrl -OutFile $tarPath
-          
-          # 安装 7zip 用于解压
           choco install 7zip -y --no-progress
           & "C:\Program Files\7-Zip\7z.exe" x $tarPath -o"C:\tools\oxygen-icons" -y
-          
-          # 配置图标路径（build.bat 读取 OXYGEN_ICONS_PATH）
+          & "C:\Program Files\7-Zip\7z.exe" x "$env:TEMP\oxygen-icons.tar" -o"C:\tools\oxygen-icons" -y
           echo "OXYGEN_ICONS_PATH=C:\tools\oxygen-icons\oxygen-icons-6.2.0\icons" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         shell: pwsh
 
-      - name: Setup MSBuild
+      # Setup MSBuild for building Visual Studio projects
+      - name: Setup MSBuild (x86 platform)
         uses: microsoft/setup-msbuild@v2
         with:
           msbuild-architecture: x86 
-          
-      - name: Fix broken import paths in .vcxproj files
+
+      # Fix absolute local paths in Visual Studio project files
+      - name: Fix broken paths in .vcxproj project files
         run: |
-          # 递归查找所有 .vcxproj 文件
           $projectFiles = Get-ChildItem -Path "$env:GITHUB_WORKSPACE\Sources" -Filter "*.vcxproj" -Recurse
           foreach ($file in $projectFiles) {
             $content = Get-Content -Path $file.FullName -Raw
             if ($content -match 'D:\\Microsoft\.Cpp\.Default\.props') {
-              Write-Host "Fixing $($file.FullName)"
+              Write-Host "Fixing: $($file.FullName)"
               $content = $content -replace 'D:\\Microsoft\.Cpp\.Default\.props', '$(VCTargetsPath)\Microsoft.Cpp.Default.props'
               $content = $content -replace 'D:\\Microsoft\.Cpp\.props', '$(VCTargetsPath)\Microsoft.Cpp.props'
               $content = $content -replace 'D:\\Microsoft\.Cpp\.targets', '$(VCTargetsPath)\Microsoft.Cpp.targets'
@@ -98,35 +105,45 @@ jobs:
             }
           }
         shell: pwsh
-  
-      - name: Run original build.bat
+
+      # Run the official build script provided by the repository
+      - name: Run build.bat
         run: |
           cd Sources
           .\build.bat
         shell: cmd 
-      
-      - name: Copy Dependencies to Output
+
+      # Copy all runtime dependencies and deploy Qt libraries
+      - name: Deploy Dependencies and Qt Libraries
         run: |
-          # 复制 libxml2.dll 到输出目录
           $outputDir = "${{ github.workspace }}\Sources\Busmaster\bin\Release"
-          Copy-Item -Path "C:\tools\libxml2\bin\libxml2.dll" -Destination $outputDir -Force
-          
-          # 复制 Oxygen 图标到资源目录
-          Copy-Item -Path "$env:OXYGEN_ICONS_PATH\*" -Destination "$outputDir\icons" -Recurse -Force
-          
-          # 验证文件存在
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+
+          # Copy libxml2 DLL
+          Copy-Item -Path "C:\vcpkg\installed\x86-windows\bin\libxml2.dll" -Destination $outputDir -Force
+
+          # Copy Oxygen icon resources
+          $iconDest = Join-Path $outputDir "icons"
+          New-Item -ItemType Directory -Path $iconDest -Force | Out-Null
+          Copy-Item -Path "$env:OXYGEN_ICONS_PATH\*" -Destination $iconDest -Recurse -Force
+
+          # Deploy Qt dependencies automatically
+          & $env:Qt5_DIR/bin/windeployqt.exe "$outputDir\Busmaster.exe" --no-translations --no-compiler-runtime --no-opengl-sw
+
+          # Verify build result
           if (Test-Path "$outputDir\Busmaster.exe") {
-            Write-Host "✅ 构建成功！Busmaster.exe 路径：$outputDir\Busmaster.exe"
+            Write-Host "✅ Build succeeded!"
+            Write-Host "📦 Output Path: $outputDir"
           } else {
-            Write-Error "❌ 构建失败！未找到 Busmaster.exe"
+            Write-Error "❌ Build failed: Busmaster.exe not found!"
             exit 1
           }
         shell: pwsh
 
-      # 12. 可选：上传构建产物（方便下载）
+      # Upload compiled binaries as GitHub Actions artifact
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Busmaster-Win-Release
+          name: BusMaster-Win32-Release
           path: ${{ github.workspace }}\Sources\Busmaster\bin\Release\*
           if-no-files-found: error
