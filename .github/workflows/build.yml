@@ -39,28 +39,18 @@ jobs:
           echo "PATH=$mingwPath;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         shell: pwsh
 
-      # 4. 安装 Bison 2.4.1 + Flex 2.5.35（GnuWin32 版本，匹配 build.bat 要求）
-      - name: Install Bison & Flex (Match build.bat version)
+      # 4. 安装 Bison & Flex (使用 winflexbison3，替代 GnuWin32)
+      - name: Install Bison & Flex (winflexbison3)
         run: |
-          # 手动下载指定版本（Chocolatey 新版可能不兼容，优先原生版本）
-          $bisonUrl = "https://downloads.sourceforge.net/project/gnuwin32/bison/2.4.1/bison-2.4.1-setup.exe"
-          $flexUrl = "https://downloads.sourceforge.net/project/gnuwin32/flex/2.5.35/flex-2.5.35-setup.exe"
+          choco install winflexbison3 -y --no-progress
+          # 将 winflexbison3 的工具目录加入 PATH
+          # 默认路径通常为 C:\ProgramData\chocolatey\lib\winflexbison3\tools
+          $winflexbisonPath = "C:\ProgramData\chocolatey\lib\winflexbison3\tools"
+          echo "PATH=$winflexbisonPath;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           
-          # 下载安装包
-          Invoke-WebRequest -Uri $bisonUrl -OutFile "$env:TEMP\bison-setup.exe"
-          Invoke-WebRequest -Uri $flexUrl -OutFile "$env:TEMP\flex-setup.exe"
-          
-          # 静默安装（适配 build.bat 路径：C:\Program Files (x86)\GnuWin32\bin）
-          Start-Process -FilePath "$env:TEMP\bison-setup.exe" -ArgumentList "/S" -Wait
-          Start-Process -FilePath "$env:TEMP\flex-setup.exe" -ArgumentList "/S" -Wait
-          
-          # 配置环境变量
-          $gnuWin32Path = "C:\Program Files (x86)\GnuWin32\bin"
-          echo "PATH=$gnuWin32Path;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          
-          # 验证安装
-          bison --version
-          flex --version
+          # 验证安装（注意可执行文件名是 win_bison / win_flex）
+          win_bison --version
+          win_flex --version
         shell: pwsh
 
       # 5. 安装 GetText（Bison/Flex 依赖）
